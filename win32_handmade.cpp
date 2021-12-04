@@ -6,3 +6,7 @@ WinMain(HINSTANCE hInstance,
 	LPSTR     lpCmdLine,
 	int       nShowCmd
 );
+
+{
+	return(0);
+}
