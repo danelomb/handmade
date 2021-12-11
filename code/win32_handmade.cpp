@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <stdint.h>
+#include <xinput.h>
 
 #define internal static
 #define local_persist static 
@@ -17,84 +18,122 @@ typedef uint64_t uint64;
 
 
 //TODO(dane): This is a global for now.
-global_variable bool Running;
+global_variable bool GlobalRunning;
 
-global_variable BITMAPINFO BitmapInfo;
-global_variable void *BitmapMemory;
-global_variable int BitmapWidth;
-global_variable int BitmapHeight;
-global_variable int BytesPerPixel = 4;
-
-internal void 
-RenderWeirdGradient(int BlueOffset, int GreenOffset)
+struct win32_offscreen_buffer
 {
-	int Width = BitmapWidth;
-	int Height = BitmapHeight;
+	BITMAPINFO Info;
+	void *Memory;
+	int Width;
+	int Height;
+	int Pitch;
+};
 
-	int Pitch = Width*BytesPerPixel;
-	uint8 *Row = (uint8 *)BitmapMemory;
+struct win32_window_dimensions
+{
+	int Width;
+	int Height;
+};
+
+global_variable win32_offscreen_buffer GlobalBackBuffer;
+
+//XInputGetState
+#define X_INPUT_GET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex,  XINPUT_STATE* pState)
+typedef X_INPUT_GET_STATE(x_input_get_state); 
+X_INPUT_GET_STATE(XInputGetStateStub)
+{return(0);
+}
+global_variable x_input_get_state *XInputGetState_ = XInputGetStateStub;
+#define XInputGetState XInputGetState_
+
+//XInputSetState
+#define X_INPUT_SET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex, XINPUT_VIBRATION* pVibration)
+typedef X_INPUT_SET_STATE(x_input_set_state); 
+X_INPUT_SET_STATE(XInputSetStateStub)
+{return(0);
+}
+global_variable x_input_set_state *XInputSetState_ = XInputSetStateStub;
+#define XInputSetState XInputSetState_
+
+internal void Win32LoadXInput(void)
+{
+	HMODULE XInputLibrary = LoadLibrary("xinput1_4.dll");
+	if(XInputLibrary)
+	{
+		XInputGetState = (x_input_get_state *)GetProcAddress(XInputLibrary, "XInputGetState");
+		XInputSetState = (x_input_set_state *)GetProcAddress(XInputLibrary, "XInputSetState");
+	}
+}
+
+
+internal win32_window_dimensions GetWindowDimension(HWND Window)
+{
+	win32_window_dimensions Result;
+	RECT ClientRect;
+	GetClientRect(Window, &ClientRect);
+	Result.Width = ClientRect.right - ClientRect.left;
+	Result.Height = ClientRect.bottom - ClientRect.top;
+	return(Result);
+}
+
+internal void RenderWeirdGradient(win32_offscreen_buffer *Buffer, int BlueOffset, int GreenOffset)
+{
+	uint8 *Row = (uint8 *)Buffer->Memory;
 	for(int Y = 0;
-		Y < BitmapHeight;
+		Y < Buffer->Height;
 		++Y)
 	{
 		uint32 *Pixel = (uint32 *)Row;
 		for(int X = 0;
-			X < BitmapWidth;
+			X < Buffer->Width;
 			++X)
 		{
 			uint8 Blue = (X + BlueOffset);
 			uint8 Green = (Y + GreenOffset);
 
-			*Pixel++ = ((Green << 8) | Blue);
-
+			*Pixel++ = ((Green << 8) | (Blue));
 		}
-		Row += Pitch;
-
+		Row += Buffer->Pitch;
 	}
 }
 
-internal void 
-Win32ResizeDIBSection(int Width, int Height)
+internal void Win32ResizeDIBSection(win32_offscreen_buffer *Buffer, int Width, int Height)
 {
-
-	//TODO(dane): Bulletproof this.
-	//Maybe don't free first, free after, then free first if that fails
-
-	if(BitmapMemory)
+	if(Buffer->Memory)
 	{
-		VirtualFree(BitmapMemory, 0, MEM_RELEASE); 
+		VirtualFree(Buffer->Memory, 0, MEM_RELEASE); 
 	}
 
-	BitmapWidth = Width;
-	BitmapHeight = Height;
+	Buffer->Width = Width;
+	Buffer->Height = Height;
+	int BytesPerPixel = 4;
 
-	BitmapInfo.bmiHeader.biSize = sizeof(BitmapInfo.bmiHeader);
-	BitmapInfo.bmiHeader.biWidth = BitmapWidth;
-	BitmapInfo.bmiHeader.biHeight = -BitmapHeight;
-	BitmapInfo.bmiHeader.biPlanes = 1;
+	Buffer->Info.bmiHeader.biSize = sizeof(Buffer->Info.bmiHeader);
+	Buffer->Info.bmiHeader.biWidth = Buffer->Width;
+	Buffer->Info.bmiHeader.biHeight = -Buffer->Height;
+	Buffer->Info.bmiHeader.biPlanes = 1;
 	//8 bits for each color and an extra 8 to make sure that pixels are aligned on 4 byte boundaries
-	BitmapInfo.bmiHeader.biBitCount = 32; 
-	BitmapInfo.bmiHeader.biCompression = BI_RGB;
+	Buffer->Info.bmiHeader.biBitCount = 32; 
+	Buffer->Info.bmiHeader.biCompression = BI_RGB;
 
-	int BitmapMemorySize = (BitmapWidth*BitmapHeight)*BytesPerPixel;
-	BitmapMemory = VirtualAlloc(0, BitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);
+	int BitmapMemorySize = (Buffer->Width*Buffer->Height)*BytesPerPixel;
+	Buffer->Memory = VirtualAlloc(0, BitmapMemorySize, MEM_COMMIT, PAGE_READWRITE);
 
+	//How many bytes a pointer has to move to go from 1 row to the next
+	Buffer->Pitch = Buffer->Width*BytesPerPixel;
 }
 
 
 
-internal void Win32UpdateWindow(HDC DeviceContext, RECT *ClientRect, int X, int Y, int Width, int Height)
+internal void Win32DisplayBufferInWindow(HDC DeviceContext, int Width, int Height,
+										 win32_offscreen_buffer *Buffer)
 {
-
-	int WindowWidth = ClientRect->right - ClientRect->left;
-	int WindowHeight = ClientRect->bottom - ClientRect->top;
-
 	//Takes rectangle of 1 size in 1 buffer and copies it to rectangle of other size in another buffer.
 	StretchDIBits(DeviceContext,
-				  0, 0, BitmapWidth, BitmapHeight,
-				  0, 0, WindowWidth, WindowHeight,
-				  BitmapMemory,
-				  &BitmapInfo,
+				  0, 0, Width, Height,
+				  0, 0, Buffer->Width, Buffer->Height,
+				  Buffer->Memory,
+				  &Buffer->Info,
 				  DIB_RGB_COLORS, SRCCOPY);
 
 }
@@ -111,23 +150,146 @@ Win32MainWindowCallback(HWND   Window,
 	{
 		case WM_SIZE:
 			{
-				RECT ClientRect;
-				GetClientRect(Window, &ClientRect);
-				int Width = ClientRect.right - ClientRect.left;
-				int Height = ClientRect.bottom - ClientRect.top;
-				Win32ResizeDIBSection(Width, Height);
 			} break;
 
 		case WM_CLOSE:
 			{
 				//TODO(dane): Handle as message to user?
-				Running = false;
+				GlobalRunning = false;
+			} break;
+
+		case WM_SYSKEYDOWN: 
+			{
+				uint32 VKCode = WParam;
+			} break;
+
+		case WM_SYSKEYUP:
+			{
+				uint32 VKCode = WParam;
+			} break;
+
+		case WM_KEYUP:
+			{
+				uint32 VKCode = WParam;
+				bool WasDown = ((LParam & (1 << 30)) != 0);
+				bool IsDown = ((LParam & (1 << 31)) == 0);
+				//if(WasDown != IsDown)
+				{
+
+					if(VKCode == 'W')
+					{
+					}
+					else if(VKCode == 'A')
+					{
+					}
+					else if(VKCode == 'S')
+					{
+					}
+					else if(VKCode == 'D')
+					{
+					}
+					else if(VKCode == 'Q')
+					{
+					}
+					else if(VKCode == 'E')
+					{
+					}
+
+
+					else if(VKCode == VK_UP)
+					{
+					}
+					else if(VKCode == VK_LEFT)
+					{
+					}
+					else if(VKCode == VK_RIGHT)
+					{
+					}
+					else if(VKCode == VK_DOWN)
+					{
+					}
+					else if(VKCode == VK_ESCAPE)
+					{
+						OutputDebugStringA("Escape ");
+						if(IsDown)
+						{
+							OutputDebugStringA("IsDown");
+						}
+						if(WasDown)
+						{
+							OutputDebugStringA("WasDown");
+						}
+						OutputDebugStringA("\n");
+					}
+					else if(VKCode == VK_SPACE)
+					{
+					}
+				}
+			} break;
+
+		case WM_KEYDOWN:
+			{
+				uint32 VKCode = WParam;
+				bool WasDown = ((LParam & (1 << 30)) != 0);
+				bool IsDown = ((LParam & (1 << 31)) == 0);
+				if(WasDown != IsDown)
+				{
+					if(VKCode == 'W')
+					{
+					}
+
+					else if(VKCode == 'A')
+					{
+					}
+					else if(VKCode == 'S')
+					{
+					}
+					else if(VKCode == 'D')
+					{
+					}
+					else if(VKCode == 'Q')
+					{
+					}
+					else if(VKCode == 'E')
+					{
+					}
+
+
+					else if(VKCode == VK_UP)
+					{
+					}
+					else if(VKCode == VK_LEFT)
+					{
+					}
+					else if(VKCode == VK_RIGHT)
+					{
+					}
+					else if(VKCode == VK_DOWN)
+					{
+					}
+					else if(VKCode == VK_ESCAPE)
+					{
+						OutputDebugStringA("Escape ");
+						if(IsDown)
+						{
+							OutputDebugStringA("IsDown");
+						}
+						if(WasDown)
+						{
+							OutputDebugStringA("WasDown");
+						}
+						OutputDebugStringA("\n");
+					}
+					else if(VKCode == VK_SPACE)
+					{
+					}
+				}
 			} break;
 
 		case WM_DESTROY:
 			{
 				//TODO(dane): Handle as error - recreate window?
-				Running = false;
+				GlobalRunning = false;
 			} break;
 
 		case WM_ACTIVATEAPP:
@@ -135,21 +297,14 @@ Win32MainWindowCallback(HWND   Window,
 				OutputDebugStringA("WM_ACTIVATEAPP\n");
 			} break;
 
-			//Paints into the window
 		case WM_PAINT:
 			{
 				PAINTSTRUCT Paint;
 				HDC DeviceContext = BeginPaint(Window, &Paint);
-				int X = Paint.rcPaint.left;
-				int Y = Paint.rcPaint.top;
-				int Width = Paint.rcPaint.right - Paint.rcPaint.left;
-				int Height = Paint.rcPaint.bottom - Paint.rcPaint.top;
+				win32_window_dimensions Dimension = GetWindowDimension(Window);
+				Win32DisplayBufferInWindow(DeviceContext, Dimension.Width, Dimension.Height, 
+										   &GlobalBackBuffer);
 
-
-				RECT ClientRect;
-				GetClientRect(Window, &ClientRect);
-
-				Win32UpdateWindow(DeviceContext, &ClientRect, X, Y, Width, Height);
 				EndPaint(Window, &Paint);
 			} break;
 
@@ -162,7 +317,7 @@ Win32MainWindowCallback(HWND   Window,
 
 
 	}
-			return(Result);
+	return(Result);
 }
 
 
@@ -175,11 +330,17 @@ WinMain(HINSTANCE Instance,
 		int       ShowCode)
 
 {
-	WNDCLASS WindowClass = {};
+
+	Win32LoadXInput();
+
+	WNDCLASSA WindowClass = {};
+	WindowClass.style = CS_HREDRAW|CS_VREDRAW;
 	WindowClass.lpfnWndProc = Win32MainWindowCallback;
 	WindowClass.hInstance = Instance;
 	//WindowClass.hIcon = ;
 	WindowClass.lpszClassName = "HandmadeHeroWindowClass";
+
+	Win32ResizeDIBSection(&GlobalBackBuffer, 1280, 720);
 
 	if(RegisterClass(&WindowClass))
 	{
@@ -202,34 +363,76 @@ WinMain(HINSTANCE Instance,
 			int XOffset = 0;
 			int YOffset = 0;
 
-			Running = true;
+			GlobalRunning = true;
 			//Main loop for window: Checks for message from window. If a message is found, jump to Win32MainWindowCallback.
-			while(Running)
+			while(GlobalRunning)
 			{
 				MSG Message;
 				while(PeekMessage(&Message, 0, 0, 0, PM_REMOVE))
 				{
 					if(Message.message == WM_QUIT)
 					{
-						Running = false;
+						int XOffset = 0;
+						int YOffset = 0;
+						GlobalRunning = false;
 					}
+
 
 					TranslateMessage(&Message);
 					DispatchMessage(&Message);
 				}
-				RenderWeirdGradient(XOffset, YOffset);
+
+				//TODO(dane):pull more frequently?
+
+				for (DWORD ControllerIndex=0; 
+					 ControllerIndex< XUSER_MAX_COUNT; 
+					 ControllerIndex++ )
+				{
+					XINPUT_STATE ControllerState;
+					if(XInputGetState(ControllerIndex, &ControllerState) == ERROR_SUCCESS)
+					{
+						//Controller is plugged in
+						XINPUT_GAMEPAD *Pad = &ControllerState.Gamepad;	
+
+						bool Up            = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_UP);
+						bool Down          = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_DOWN);
+						bool Left          = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_LEFT);
+						bool Right         = (Pad->wButtons & XINPUT_GAMEPAD_DPAD_RIGHT);
+						bool Start         = (Pad->wButtons & XINPUT_GAMEPAD_START);
+						bool Back          = (Pad->wButtons & XINPUT_GAMEPAD_BACK);
+						bool LeftShoulder  = (Pad->wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER);
+						bool RightShoulder = (Pad->wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER);
+						bool AButton       = (Pad->wButtons & XINPUT_GAMEPAD_A);
+						bool BButton       = (Pad->wButtons & XINPUT_GAMEPAD_B);
+						bool XButton       = (Pad->wButtons & XINPUT_GAMEPAD_X);
+						bool YButton       = (Pad->wButtons & XINPUT_GAMEPAD_Y);
+
+						int16 StickX = Pad->sThumbLX;
+						int16 StickY = Pad->sThumbLY;
+
+
+					}
+					else
+					{
+						//Controller not available
+					}
+				}
+
+				XINPUT_VIBRATION Vibration;
+				Vibration.wLeftMotorSpeed = 60000;
+				Vibration.wRightMotorSpeed = 60000;
+				XInputSetState(0, &Vibration);
+
+				//Render gradient into the backbuffer, then
+				RenderWeirdGradient(&GlobalBackBuffer, XOffset, YOffset);
 
 				HDC DeviceContext = GetDC(Window);
-				RECT ClientRect;
-				GetClientRect(Window, &ClientRect);
-				int WindowWidth = ClientRect.right - ClientRect.left;
-				int WindowHeight = ClientRect.bottom - ClientRect.top;
-				Win32UpdateWindow(DeviceContext, &ClientRect, 0, 0, WindowWidth, WindowHeight);
+				win32_window_dimensions Dimension = GetWindowDimension(Window);
+
+				Win32DisplayBufferInWindow(DeviceContext, Dimension.Width, Dimension.Height, 
+										   &GlobalBackBuffer);
+
 				ReleaseDC(Window, DeviceContext);
-
-				++XOffset;
-				YOffset += 2;
-
 			}
 		}
 		else
