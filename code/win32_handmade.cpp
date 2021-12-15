@@ -22,7 +22,7 @@ typedef uint64_t uint64;
 
 
 //TODO(dane): This is a global for now.
-global_variable bool GlobalRunning;
+
 
 struct win32_offscreen_buffer
 {
@@ -39,7 +39,10 @@ struct win32_window_dimensions
   int Height;
 };
 
+global_variable bool GlobalRunning;
 global_variable win32_offscreen_buffer GlobalBackBuffer;
+global_variable LPDIRECTSOUNDBUFFER GlobalSecondaryBuffer;
+
 
 //XInputGetState
 #define X_INPUT_GET_STATE(name) DWORD WINAPI name(DWORD dwUserIndex,  XINPUT_STATE* pState)
@@ -65,9 +68,6 @@ global_variable x_input_set_state *XInputSetState_ = XInputSetStateStub;
 #define DIRECT_SOUND_CREATE(name) HRESULT WINAPI name(LPCGUID pcGuidDevice, LPDIRECTSOUND *ppDS, LPUNKNOWN pUnkOuter)
 typedef DIRECT_SOUND_CREATE(direct_sound_create);
 
-
-
-
 internal void Win32LoadXInput(void)
 {
   HMODULE XInputLibrary = LoadLibrary("xinput1_4.dll");
@@ -92,9 +92,10 @@ internal void Win32InitDSound(HWND Window, int32 SamplesPerSecond, int32 BufferS
 
   if(DSoundLibrary)
   {
+    //Get a DirectSound object
     direct_sound_create *DirectSoundCreate = (direct_sound_create *)GetProcAddress(DSoundLibrary, "DirectSoundCreate");
 
-    //TODO(dane):dounble check that this works on xp, 8, or 7.
+    //TODO(dane):dounble check that this works on xp, DirectSound8, or 7.
     LPDIRECTSOUND DirectSound;
     if(DirectSoundCreate && SUCCEEDED(DirectSoundCreate(0, &DirectSound, 0)))
     {
@@ -135,13 +136,24 @@ internal void Win32InitDSound(HWND Window, int32 SamplesPerSecond, int32 BufferS
       BufferDescription.dwFlags = 0;
       BufferDescription.dwBufferBytes = BufferSize;
       BufferDescription.lpwfxFormat = &WaveFormat;
-      LPDIRECTSOUNDBUFFER SecondaryBuffer;
 
-      if(SUCCEEDED(DirectSound->CreateSoundBuffer(&BufferDescription, &SecondaryBuffer, 0)))
+      if(SUCCEEDED(DirectSound->CreateSoundBuffer(&BufferDescription, &GlobalSecondaryBuffer, 0)))
       {
         OutputDebugStringA("Secondary buffer created successfully\n");
       }
+      else
+      {
+        //TODO(dane):Diagnostic
+      }
     }
+    else
+    {
+      //TODO(dane):Diagnostic
+    }
+  }
+  else
+  {
+    //TODO(dane):Diagnostic
   }
 }
 
@@ -373,8 +385,17 @@ WinMain(HINSTANCE Instance,
 
     if(Window)
     {
+
+      HDC DeviceContext = GetDC(Window);
+
       int XOffset = 0;
       int YOffset = 0;
+      int SquareWaveCounter = 0;
+      int SamplesPerSecond = 48000;
+      int Hz = 256;
+      int SquareWavePeriod = SamplesPerSecond/Hz;
+
+
 
       Win32InitDSound(Window, 48000, 48000*sizeof(int16)*2);
 
@@ -446,9 +467,54 @@ WinMain(HINSTANCE Instance,
 
         RenderWeirdGradient(&GlobalBackBuffer, XOffset, YOffset);
 
-        HDC DeviceContext = GetDC(Window);
-        win32_window_dimensions Dimension = GetWindowDimension(Window);
 
+        //DirectSound Output test
+        DWORD WritePointer = ;
+        DWORD BytesToWrite = ;
+
+        VOID *Region1;
+        DWORD *Region1Size;
+        VOID *Region2;
+        DWORD *Region2Size;
+
+        GlobalSecondaryBuffer->Lock(WritePointer, BytesToWrite,
+                                    &Region1, Region1Size,
+                                    &Region2, Region2Size,
+                                    0);
+
+        int16 *SampleOut =(int16 *)Region1;
+        DWORD Region1SampleCount = Region1Size/BytesPerSample;
+        DWORD Region2SampleCount = Region2Size/BytesPerSample;
+        for(DWORD SampleIndex = 0;
+            SampleIndex < Region1SampleCount;
+            ++SampleIndex)
+        {
+          if(SquareWaveCounter)
+          {
+            SquareWaveCounter = SquareWavePeriod; 
+          }
+          int16 SampleValue = (SquareWaveCounter > (SquareWavePeriod/2)) ? 16000: -16000;
+          *SampleOut++ = SampleValue;
+          *SampleOut++ = SampleValue;
+          --SquareWaveCounter;
+        }
+
+        for(DWORD SampleIndex = 0;
+            SampleIndex < Region2SampleCount;
+            ++SampleIndex)
+        {
+          if(SquareWaveCounter)
+          {
+            SquareWaveCounter = SquareWavePeriod; 
+          }
+          int16 SampleValue = (SquareWaveCounter > (SquareWavePeriod/2)) ? 16000: -16000;
+          *SampleOut++ = SampleValue;
+          *SampleOut++ = SampleValue;
+          --SquareWaveCounter;
+        }
+
+
+        win32_window_dimensions Dimension = GetWindowDimension(Window);
         Win32DisplayBufferInWindow(DeviceContext, Dimension.Width, Dimension.Height,
                                    &GlobalBackBuffer);
 
