@@ -85,7 +85,7 @@ internal void Win32LoadXInput(void)
   }
 }
 
-internal void Win32InitDSound(HWND Window)
+internal void Win32InitDSound(HWND Window, int32 SamplesPerSecond, int32 BufferSize)
 {
   //Load Library
   HMODULE DSoundLibrary = LoadLibrary("dsound.dll");
@@ -98,32 +98,52 @@ internal void Win32InitDSound(HWND Window)
     LPDIRECTSOUND DirectSound;
     if(DirectSoundCreate && SUCCEEDED(DirectSoundCreate(0, &DirectSound, 0)))
     {
+      //set the wave format
+      tWAVEFORMATEX WaveFormat = {};
+      WaveFormat.wFormatTag = WAVE_FORMAT_PCM;
+      WaveFormat.nChannels = 2;
+      WaveFormat.nSamplesPerSec = SamplesPerSecond;
+      WaveFormat.wBitsPerSample = 16;
+      WaveFormat.nBlockAlign = (WaveFormat.nChannels*WaveFormat.wBitsPerSample) / 8;
+      WaveFormat.nAvgBytesPerSec = WaveFormat.nBlockAlign*WaveFormat.nSamplesPerSec;
+      WaveFormat.cbSize = 0;
 
       if(SUCCEEDED(DirectSound->SetCooperativeLevel(Window, DSSCL_PRIORITY)))
       {
 
+        //"Create" a primary buffer
+        DSBUFFERDESC BufferDescription = {};
+        BufferDescription.dwSize = sizeof(BufferDescription);
+        BufferDescription.dwFlags = DSBCAPS_PRIMARYBUFFER;
+        LPDIRECTSOUNDBUFFER PrimaryBuffer;
+        if(SUCCEEDED(DirectSound->CreateSoundBuffer(&BufferDescription, &PrimaryBuffer, 0)))
+        {
+          if(SUCCEEDED(PrimaryBuffer->SetFormat(&WaveFormat)))
+          {
+            OutputDebugStringA("Primary buffer set\n");
+            //We have finally set the format!
+          }
+          else
+          {
+            //TODO(dane):Diagnostic
+          }
+        }
       }
-
-      else
-      {
-        //TODO(dane):Diagnostic
-      }
-
-      //"Create" a primary buffer
-
       //Create a secondary buffer
+      DSBUFFERDESC BufferDescription = {};
+      BufferDescription.dwSize = sizeof(BufferDescription);
+      BufferDescription.dwFlags = 0;
+      BufferDescription.dwBufferBytes = BufferSize;
+      BufferDescription.lpwfxFormat = &WaveFormat;
+      LPDIRECTSOUNDBUFFER SecondaryBuffer;
 
-      //Start it playing
+      if(SUCCEEDED(DirectSound->CreateSoundBuffer(&BufferDescription, &SecondaryBuffer, 0)))
+      {
+        OutputDebugStringA("Secondary buffer created successfully\n");
+      }
     }
-    else
-    {
-      //TODO(dane):Diagnostic
-    }
-
   }
-
 }
-
 
 internal win32_window_dimensions GetWindowDimension(HWND Window)
 {
@@ -357,7 +377,7 @@ WinMain(HINSTANCE Instance,
       int XOffset = 0;
       int YOffset = 0;
 
-      Win32InitDSound();
+      Win32InitDSound(Window, 48000, 48000*sizeof(int16)*2);
 
       GlobalRunning = true;
       //Main loop for window: Checks for message from window. If a message is found, jump to Win32MainWindowCallback.
