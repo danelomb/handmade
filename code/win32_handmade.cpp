@@ -542,12 +542,6 @@ WinMain(HINSTANCE Instance,
           DWORD ByteToLock = (SoundOutput.RunningSampleIndex*SoundOutput.BytesPerSample) % SoundOutput.SecondaryBufferSize;
           DWORD BytesToWrite;
 
-          //Need a more accurate check than this
-          if(ByteToLock == PlayCursor)
-          {
-              BytesToWrite = 0;
-          }
-
           if(ByteToLock > PlayCursor)
           {
             BytesToWrite = SoundOutput.SecondaryBufferSize - ByteToLock;
