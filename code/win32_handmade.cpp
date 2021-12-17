@@ -3,6 +3,7 @@
 #include <xinput.h>
 #include <dsound.h>
 #include <math.h>
+#include <stdio.h>
 
 
 #define internal static
@@ -41,6 +42,18 @@ struct win32_window_dimensions
 {
   int Width;
   int Height;
+};
+
+struct win32_sound_output
+{
+  //Sound Test
+  int SamplesPerSecond;
+  int ToneHz;
+  uint32 RunningSampleIndex;
+  int WavePeriod;
+  int BytesPerSample;
+  int SecondaryBufferSize;
+  int ToneVolume;
 };
 
 global_variable bool GlobalRunning;
@@ -231,6 +244,53 @@ internal void Win32DisplayBufferInWindow(HDC DeviceContext, int Width, int Heigh
                 DIB_RGB_COLORS, SRCCOPY);
 }
 
+
+  void
+Win32FillSoundBuffer(win32_sound_output *SoundOutput, DWORD ByteToLock, DWORD BytesToWrite)
+{
+  VOID *Region1;
+  DWORD Region1Size;
+  VOID *Region2;
+  DWORD Region2Size;
+  real32 TimeCounter = 0;
+  if(SUCCEEDED(GlobalSecondaryBuffer->Lock(ByteToLock, BytesToWrite,
+                                           &Region1, &Region1Size,
+                                           &Region2, &Region2Size,
+                                           0)))
+  {
+    int16 *SampleOut =(int16 *)Region1;
+    DWORD Region1SampleCount = Region1Size/SoundOutput->BytesPerSample;
+
+    for(DWORD SampleIndex = 0;
+        SampleIndex < Region1SampleCount;
+        ++SampleIndex)
+    {
+      real32 t =2.0f*Pi32*(real32)SoundOutput->RunningSampleIndex / (real32)SoundOutput->WavePeriod;
+      real32 SineValue = sinf(t);
+      int16 SampleValue = int16(SineValue * SoundOutput->ToneVolume);
+      *SampleOut++ = SampleValue;
+      *SampleOut++ = SampleValue;
+      SoundOutput->RunningSampleIndex++;
+    }
+
+    DWORD Region2SampleCount = Region2Size/SoundOutput->BytesPerSample;
+    SampleOut =(int16 *)Region2;
+    for(DWORD SampleIndex = 0;
+        SampleIndex < Region2SampleCount;
+        ++SampleIndex)
+    {
+      real32 t =2.0f*Pi32*(real32)SoundOutput->RunningSampleIndex / (real32)SoundOutput->WavePeriod;
+      real32 SineValue = sinf(t);
+      int16 SampleValue = int16(SineValue * SoundOutput->ToneVolume);
+      *SampleOut++ = SampleValue;
+      *SampleOut++ = SampleValue;
+      SoundOutput->RunningSampleIndex++;
+    }
+  }
+  GlobalSecondaryBuffer->Unlock( Region1, Region1Size, Region2, Region2Size);
+
+}
+
   LRESULT CALLBACK
 Win32MainWindowCallback(HWND   Window,
                         UINT   Message,
@@ -350,63 +410,7 @@ Win32MainWindowCallback(HWND   Window,
 }
 
 
-struct win32_sound_output
-{
-  //Sound Test
-  int SamplesPerSecond;
-  int Hz;
-  uint32 RunningSampleIndex;
-  int WavePeriod;
-  int BytesPerSample;
-  int SecondaryBufferSize;
-  int ToneVolume;
-};
 
-  void
-Win32FillSoundBuffer(win32_sound_output *SoundOutput, DWORD ByteToLock, DWORD BytesToWrite)
-{
-  VOID *Region1;
-  DWORD Region1Size;
-  VOID *Region2;
-  DWORD Region2Size;
-  real32 TimeCounter = 0;
-  if(SUCCEEDED(GlobalSecondaryBuffer->Lock(ByteToLock, BytesToWrite,
-                                           &Region1, &Region1Size,
-                                           &Region2, &Region2Size,
-                                           0)))
-  {
-    int16 *SampleOut =(int16 *)Region1;
-    DWORD Region1SampleCount = Region1Size/SoundOutput->BytesPerSample;
-
-    for(DWORD SampleIndex = 0;
-        SampleIndex < Region1SampleCount;
-        ++SampleIndex)
-    {
-      real32 t =2.0f*Pi32*(real32)SoundOutput->RunningSampleIndex / (real32)SoundOutput->WavePeriod;
-      real32 SineValue = sinf(t);
-      int16 SampleValue = int16(SineValue * SoundOutput->ToneVolume);
-      *SampleOut++ = SampleValue;
-      *SampleOut++ = SampleValue;
-      SoundOutput->RunningSampleIndex++;
-    }
-
-    DWORD Region2SampleCount = Region2Size/SoundOutput->BytesPerSample;
-    SampleOut =(int16 *)Region2;
-    for(DWORD SampleIndex = 0;
-        SampleIndex < Region2SampleCount;
-        ++SampleIndex)
-    {
-      real32 t =2.0f*Pi32*(real32)SoundOutput->RunningSampleIndex / (real32)SoundOutput->WavePeriod;
-      real32 SineValue = sinf(t);
-      int16 SampleValue = int16(SineValue * SoundOutput->ToneVolume);
-      *SampleOut++ = SampleValue;
-      *SampleOut++ = SampleValue;
-      SoundOutput->RunningSampleIndex++;
-    }
-  }
-  GlobalSecondaryBuffer->Unlock( Region1, Region1Size, Region2, Region2Size);
-
-}
 
 
 //Windows entry point
@@ -456,9 +460,9 @@ WinMain(HINSTANCE Instance,
       win32_sound_output SoundOutput = {};
 
       SoundOutput.SamplesPerSecond = 48000;
-      SoundOutput.Hz = 256;
+      SoundOutput.ToneHz = 256;
       SoundOutput.RunningSampleIndex = 0;
-      SoundOutput.WavePeriod = SoundOutput.SamplesPerSecond/SoundOutput.Hz;
+      SoundOutput.WavePeriod = SoundOutput.SamplesPerSecond/SoundOutput.ToneHz;
       SoundOutput.BytesPerSample = sizeof(int16)*2;
       SoundOutput.SecondaryBufferSize = SoundOutput.SamplesPerSecond*SoundOutput.BytesPerSample;
       SoundOutput.ToneVolume = 600;
@@ -467,11 +471,24 @@ WinMain(HINSTANCE Instance,
       Win32FillSoundBuffer(&SoundOutput, 0, SoundOutput.SecondaryBufferSize);
       GlobalSecondaryBuffer->Play(0, 0, DSBPLAY_LOOPING);
 
+      LARGE_INTEGER LastCounter;
+      QueryPerformanceCounter(&LastCounter);
+      uint64 LastCycleCount = __rdtsc();
 
       GlobalRunning = true;
+
+      LARGE_INTEGER PerformanceFrequencyResult;
+      QueryPerformanceFrequency(&PerformanceFrequencyResult);
+      int64 PerfCountFrequency = PerformanceFrequencyResult.QuadPart;
+
       //Main loop for window: Checks for message from window. If a message is found, jump to Win32MainWindowCallback.
       while(GlobalRunning)
       {
+        LARGE_INTEGER BeginCounter;
+        QueryPerformanceCounter(&BeginCounter);
+        BeginCounter.QuadPart;
+
+
         MSG Message;
         while(PeekMessage(&Message, 0, 0, 0, PM_REMOVE))
         {
@@ -554,11 +571,28 @@ WinMain(HINSTANCE Instance,
 
           Win32FillSoundBuffer(&SoundOutput, ByteToLock, BytesToWrite);
         }
-
         win32_window_dimensions Dimension = GetWindowDimension(Window);
         Win32DisplayBufferInWindow(DeviceContext, Dimension.Width, Dimension.Height,
                                    &GlobalBackBuffer);
         ReleaseDC(Window, DeviceContext);
+
+        uint64 EndCycleCount = __rdtsc();
+        LARGE_INTEGER EndCounter;
+        QueryPerformanceCounter(&EndCounter);
+
+        //TODO(dane):Display the value here
+        uint64 CyclesElapsed = EndCycleCount - LastCycleCount;
+        int64 CounterElapsed = EndCounter.QuadPart - LastCounter.QuadPart;
+        real32 MSPerFrame = real32(((1000.0f*(real32)CounterElapsed) / (real32)PerfCountFrequency));
+        real32 FPS = ((real32)PerfCountFrequency / (real32)CounterElapsed);
+        real32 MCPF = ((real32)CyclesElapsed/(1000.0f*1000.0f));
+
+        char Buffer[256];
+        sprintf(Buffer, "%.2fms/f, %.2fFPS,   %.2fMc/f\n", MSPerFrame, FPS, MCPF);
+        OutputDebugStringA(Buffer);
+
+        LastCounter = EndCounter;
+        LastCycleCount = EndCycleCount;
       }
 
     }
@@ -568,4 +602,9 @@ WinMain(HINSTANCE Instance,
     }
     return(0);
   }
+  else
+  {
+    //TODO(dane): Logging
+  }
+  return(0);
 }
