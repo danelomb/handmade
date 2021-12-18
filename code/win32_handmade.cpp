@@ -11,23 +11,22 @@
 #define global_variable static
 #define Pi32 3.14159265359f
 
-typedef int8_t int8;
-typedef int16_t int16;
-typedef int32_t int32;
-typedef int64_t int64;
-typedef int32 bool32;
+typedef int8_t i8;
+typedef int16_t i16;
+typedef int32_t i32;
+typedef int64_t i64;
+typedef i32 bool32;
 
 
-typedef uint8_t uint8;
-typedef uint16_t uint16;
-typedef uint32_t uint32;
-typedef uint64_t uint64;
+typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
 
 typedef float real32;
 typedef double real64;
 
-//TODO(dane): This is a global for now.
-
+#include "handmade.cpp"
 
 struct win32_offscreen_buffer
 {
@@ -49,7 +48,7 @@ struct win32_sound_output
   //Sound Test
   int SamplesPerSecond;
   int ToneHz;
-  uint32 RunningSampleIndex;
+  u32 RunningSampleIndex;
   int WavePeriod;
   int BytesPerSample;
   int SecondaryBufferSize;
@@ -102,7 +101,7 @@ internal void Win32LoadXInput(void)
   }
 }
 
-internal void Win32InitDSound(HWND Window, int32 SamplesPerSecond, int32 BufferSize)
+internal void Win32InitDSound(HWND Window, i32 SamplesPerSecond, i32 BufferSize)
 {
   //Load Library
   HMODULE DSoundLibrary = LoadLibrary("dsound.dll");
@@ -186,18 +185,18 @@ internal win32_window_dimensions GetWindowDimension(HWND Window)
 
 internal void RenderWeirdGradient(win32_offscreen_buffer *Buffer, int BlueOffset, int GreenOffset)
 {
-  uint8 *Row = (uint8 *)Buffer->Memory;
+  u8 *Row = (u8 *)Buffer->Memory;
   for(int Y = 0;
       Y < Buffer->Height;
       ++Y)
   {
-    uint32 *Pixel = (uint32 *)Row;
+    u32 *Pixel = (u32 *)Row;
     for(int X = 0;
         X < Buffer->Width;
         ++X)
     {
-      uint8 Blue = (X + BlueOffset);
-      uint8 Green = (Y + GreenOffset);
+      u8 Blue = (X + BlueOffset);
+      u8 Green = (Y + GreenOffset);
 
       *Pixel++ = ((Green << 8) | (Blue));
     }
@@ -258,7 +257,7 @@ Win32FillSoundBuffer(win32_sound_output *SoundOutput, DWORD ByteToLock, DWORD By
                                            &Region2, &Region2Size,
                                            0)))
   {
-    int16 *SampleOut =(int16 *)Region1;
+    i16 *SampleOut =(i16 *)Region1;
     DWORD Region1SampleCount = Region1Size/SoundOutput->BytesPerSample;
 
     for(DWORD SampleIndex = 0;
@@ -267,21 +266,21 @@ Win32FillSoundBuffer(win32_sound_output *SoundOutput, DWORD ByteToLock, DWORD By
     {
       real32 t =2.0f*Pi32*(real32)SoundOutput->RunningSampleIndex / (real32)SoundOutput->WavePeriod;
       real32 SineValue = sinf(t);
-      int16 SampleValue = int16(SineValue * SoundOutput->ToneVolume);
+      i16 SampleValue = i16(SineValue * SoundOutput->ToneVolume);
       *SampleOut++ = SampleValue;
       *SampleOut++ = SampleValue;
       SoundOutput->RunningSampleIndex++;
     }
 
     DWORD Region2SampleCount = Region2Size/SoundOutput->BytesPerSample;
-    SampleOut =(int16 *)Region2;
+    SampleOut =(i16 *)Region2;
     for(DWORD SampleIndex = 0;
         SampleIndex < Region2SampleCount;
         ++SampleIndex)
     {
       real32 t =2.0f*Pi32*(real32)SoundOutput->RunningSampleIndex / (real32)SoundOutput->WavePeriod;
       real32 SineValue = sinf(t);
-      int16 SampleValue = int16(SineValue * SoundOutput->ToneVolume);
+      i16 SampleValue = i16(SineValue * SoundOutput->ToneVolume);
       *SampleOut++ = SampleValue;
       *SampleOut++ = SampleValue;
       SoundOutput->RunningSampleIndex++;
@@ -317,7 +316,7 @@ Win32MainWindowCallback(HWND   Window,
     case WM_KEYUP:
     case WM_KEYDOWN:
       {
-        uint32 VKCode = WParam;
+        u32 VKCode = WParam;
         bool WasDown = ((LParam & (1 << 30)) != 0);
         bool IsDown = ((LParam & (1 << 31)) == 0);
         if(WasDown != IsDown)
@@ -463,7 +462,7 @@ WinMain(HINSTANCE Instance,
       SoundOutput.ToneHz = 256;
       SoundOutput.RunningSampleIndex = 0;
       SoundOutput.WavePeriod = SoundOutput.SamplesPerSecond/SoundOutput.ToneHz;
-      SoundOutput.BytesPerSample = sizeof(int16)*2;
+      SoundOutput.BytesPerSample = sizeof(i16)*2;
       SoundOutput.SecondaryBufferSize = SoundOutput.SamplesPerSecond*SoundOutput.BytesPerSample;
       SoundOutput.ToneVolume = 600;
 
@@ -473,13 +472,13 @@ WinMain(HINSTANCE Instance,
 
       LARGE_INTEGER LastCounter;
       QueryPerformanceCounter(&LastCounter);
-      uint64 LastCycleCount = __rdtsc();
+      u64 LastCycleCount = __rdtsc();
 
       GlobalRunning = true;
 
       LARGE_INTEGER PerformanceFrequencyResult;
       QueryPerformanceFrequency(&PerformanceFrequencyResult);
-      int64 PerfCountFrequency = PerformanceFrequencyResult.QuadPart;
+      i64 PerfCountFrequency = PerformanceFrequencyResult.QuadPart;
 
       //Main loop for window: Checks for message from window. If a message is found, jump to Win32MainWindowCallback.
       while(GlobalRunning)
@@ -501,8 +500,8 @@ WinMain(HINSTANCE Instance,
           DispatchMessage(&Message);
         }
 
-        //TODO(dane):pull more frequently?
-        //TODO(dane):preferably only pull controllers that are in use.
+        //TODO(dane):poll more frequently?
+        //TODO(dane):preferably only poll controllers that are in use.
         for (DWORD ControllerIndex=0;
              ControllerIndex< XUSER_MAX_COUNT;
              ControllerIndex++ )
@@ -527,8 +526,8 @@ WinMain(HINSTANCE Instance,
             bool XButton       = (Pad->wButtons & XINPUT_GAMEPAD_X);
             bool YButton       = (Pad->wButtons & XINPUT_GAMEPAD_Y);
 
-            int16 StickX = Pad->sThumbLX;
-            int16 StickY = Pad->sThumbLY;
+            i16 StickX = Pad->sThumbLX;
+            i16 StickY = Pad->sThumbLY;
 
             XOffset += StickX >> 14;
             YOffset -= StickY >> 14;
@@ -541,14 +540,13 @@ WinMain(HINSTANCE Instance,
         }
 
 
-        //Vibrator mode:
-        //
-        // XINPUT_VIBRATION Vibration;
-        // Vibration.wLeftMotorSpeed = 60000;
-        // Vibration.wRightMotorSpeed = 60000;
-        // XInputSetState(0, &Vibration);
+        game_offscreen_buffer Buffer = {};
+        Buffer.Memory = GlobalBackBuffer.Memory;
+        Buffer.Width = GlobalBackBuffer.Width;
+        Buffer.Height = GlobalBackBuffer.Height;
+        Buffer.Pitch = GlobalBackBuffer.Pitch;
 
-        RenderWeirdGradient(&GlobalBackBuffer, XOffset, YOffset);
+        GameUpdateAndRender(&Buffer, XOffset, YOffset);
 
         DWORD PlayCursor;
         DWORD WriteCursor;
@@ -576,21 +574,20 @@ WinMain(HINSTANCE Instance,
                                    &GlobalBackBuffer);
         ReleaseDC(Window, DeviceContext);
 
-        uint64 EndCycleCount = __rdtsc();
+        u64 EndCycleCount = __rdtsc();
         LARGE_INTEGER EndCounter;
         QueryPerformanceCounter(&EndCounter);
 
-        //TODO(dane):Display the value here
-        uint64 CyclesElapsed = EndCycleCount - LastCycleCount;
-        int64 CounterElapsed = EndCounter.QuadPart - LastCounter.QuadPart;
+        u64 CyclesElapsed = EndCycleCount - LastCycleCount;
+        i64 CounterElapsed = EndCounter.QuadPart - LastCounter.QuadPart;
         real32 MSPerFrame = real32(((1000.0f*(real32)CounterElapsed) / (real32)PerfCountFrequency));
         real32 FPS = ((real32)PerfCountFrequency / (real32)CounterElapsed);
         real32 MCPF = ((real32)CyclesElapsed/(1000.0f*1000.0f));
-
+#if 0
         char Buffer[256];
         sprintf(Buffer, "%.2fms/f, %.2fFPS,   %.2fMc/f\n", MSPerFrame, FPS, MCPF);
         OutputDebugStringA(Buffer);
-
+#endif
         LastCounter = EndCounter;
         LastCycleCount = EndCycleCount;
       }
